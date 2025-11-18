@@ -22,6 +22,7 @@ canvas{border-radius:18px;box-shadow:var(--shadow);background: linear-gradient(1
 #startUI, #gameOverUI{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;backdrop-filter: blur(10px);background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.45));color:white;text-align:center;}
 #titleLarge{font-size:72px;font-weight:900;letter-spacing:6px;text-shadow: 0 8px 30px rgba(0,0,0,0.6), 0 0 30px rgba(255,255,255,0.06);}
 #subtitle{font-size:18px;opacity:0.9;}
+#homeHighScore{font-size:18px;opacity:0.85;}
 #scoreLabel{position:absolute;top:110px;left:50%;transform:translateX(-50%);color:white;z-index:9998;font-weight:700;font-size:20px;text-shadow:0 6px 18px rgba(0,0,0,0.45);}
 @media (max-width:480px){
   #titleLarge{font-size:44px}
@@ -43,7 +44,7 @@ canvas{border-radius:18px;box-shadow:var(--shadow);background: linear-gradient(1
     <div style="display:flex;flex-direction:column;align-items:center;gap:20px;">
       <div id="titleLarge">FLAPPY BIRD</div>
       <div id="subtitle">Premium UI • Modern Style • Responsive</div>
-      <!-- Centered start button -->
+      <div id="homeHighScore">High Score: <span id="homeHighScoreNum">0</span></div>
       <button id="startMainBtn" class="btn">Start Game</button>
     </div>
   </div>
@@ -87,6 +88,10 @@ let gameStarted=false, gameOver=false, GRAVITY=0.6, JUMP=-10;
 let bird={x:80,y:300,w:40,h:40,vy:0,rot:0,flapTimer:0};
 let pipes=[], particles=[], frame=0, score=0;
 
+// High Score
+let highScore = parseInt(localStorage.getItem('flappy_high') || '0', 10);
+document.getElementById('homeHighScoreNum').textContent = highScore;
+
 const cloudsA=[], cloudsB=[];
 function spawnClouds(){
   for(let i=0;i<6;i++) cloudsA.push({x:Math.random()*internalW,y:Math.random()*140,w:60+Math.random()*80,speed:0.2+Math.random()*0.3,alpha:0.12+Math.random()*0.15});
@@ -95,74 +100,172 @@ function spawnClouds(){
 spawnClouds();
 
 function generatePipe(){const gap=150, topH=Math.random()*(internalH-gap-160)+50, bottomH=internalH-topH-gap; pipes.push({x:internalW+10,top:topH,bottom:bottomH,passed:false});}
-class FireParticle{constructor(x,y){this.x=x+(Math.random()*20-10);this.y=y;this.vy=-1-Math.random()*1.6;this.r=2+Math.random()*4;this.alpha=1;}update(){this.y+=this.vy; this.alpha-=0.03;}draw(){ctx.beginPath();ctx.fillStyle=`rgba(255,${Math.floor(80+Math.random()*120)},0,${this.alpha})`;ctx.arc(this.x,this.y,this.r,0,Math.PI*2);ctx.fill();}}
 
-function resetGame(){gameStarted=false; gameOver=false; pipes=[]; particles=[]; frame=0; score=0; bird.x=80; bird.y=300; bird.vy=0; bird.rot=0; startUI.style.display='flex'; gameOverUI.style.display='none'; scoreLabel.parentElement.style.display='';}
-function startGame(){gameStarted=true; gameOver=false; startUI.style.display='none'; gameOverUI.style.display='none'; scoreLabel.parentElement.style.display=''; pipes=[]; particles=[]; frame=0; score=0; bird.y=internalH/2; bird.vy=0; generatePipe(); }
-
-document.addEventListener('keydown',(e)=>{
-  if(e.code==='Space'){
-    if(!gameStarted && startUI.style.display!=='none') startGame();
-    if(!gameOver && gameStarted) bird.vy=JUMP, bird.flapTimer=6;
-    if(gameOver) playAgain();
-  }
-});
-
-canvas.addEventListener('touchstart',(e)=>{
-  e.preventDefault();
-  if(!gameStarted) startGame();
-  if(!gameOver && gameStarted) bird.vy=JUMP, bird.flapTimer=6;
-  if(gameOver) playAgain();
-});
-
-// ← Added: mouse click event for hopping
-canvas.addEventListener('mousedown', (e)=>{
-  e.preventDefault();
-  if(!gameStarted) startGame();
-  if(!gameOver && gameStarted) bird.vy=JUMP, bird.flapTimer=6;
-  if(gameOver) playAgain();
-});
-
-startMainBtn.addEventListener('click',()=>{if(!gameStarted) startGame();});
-playAgainBtn.addEventListener('click',()=>{playAgain();});
-goHomeBtn.addEventListener('click',()=>{resetGame();});
-function playAgain(){startGame();}
-
-// Main update & draw loop
-function update(){
-  frame++;
-  cloudsA.forEach(c=>{c.x-=c.speed; if(c.x<-200) c.x=internalW+200;});
-  cloudsB.forEach(c=>{c.x-=c.speed; if(c.x<-300) c.x=internalW+300;});
-  if(!gameStarted||gameOver){bird.flapTimer=Math.max(0,bird.flapTimer-1); bird.vy=Math.sin(frame*0.08)*0.6; bird.y+=bird.vy; bird.rot=Math.sin(frame*0.12)*0.25; return;}
-  bird.vy+=GRAVITY; bird.y+=bird.vy; bird.rot=Math.max(-0.6,Math.min(0.9,bird.vy*0.06));
-  if(frame%90===0) generatePipe();
-  for(let i=pipes.length-1;i>=0;i--){const p=pipes[i]; p.x-=2.6; if(!p.passed&&p.x+50<bird.x){p.passed=true;score++; scoreLabel.textContent=score;} if(p.x<-80) pipes.splice(i,1); if(Math.random()<0.12){particles.push(new FireParticle(p.x+25,p.top-6)); particles.push(new FireParticle(p.x+25,internalH-p.bottom+6));}}
-  for(let i=particles.length-1;i>=0;i--){particles[i].update(); if(particles[i].alpha<=0) particles.splice(i,1);}
-  for(let p of pipes){if(bird.x<p.x+50 && bird.x+bird.w>p.x){if(bird.y<p.top || bird.y+bird.h>internalH-p.bottom){gameOver=true; gameStarted=false; showGameOver();}}}
-  if(bird.y+bird.h>=internalH||bird.y<=0){gameOver=true; gameStarted=false; showGameOver();}
+// FireParticle for realistic fire
+class FireParticle{
+    constructor(x,y){
+        this.x = x + (Math.random()*20-10);
+        this.y = y;
+        this.vy = -1-Math.random()*1.5;
+        this.vx = Math.random()*1.2-0.6;
+        this.r = 2+Math.random()*4;
+        this.alpha = 1;
+        this.life = 20 + Math.random()*20;
+    }
+    update(dt){
+        this.x += this.vx*dt*2;
+        this.y += this.vy*dt*2;
+        this.alpha -= 0.03*dt;
+        this.r *= 0.96;
+    }
+    draw(){
+        ctx.beginPath();
+        ctx.fillStyle=`rgba(255,${Math.floor(80+Math.random()*120)},0,${this.alpha})`;
+        ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+        ctx.fill();
+    }
 }
-function showGameOver(){ finalScore.textContent=score; finalHigh.textContent=Math.max(score,parseInt(localStorage.getItem('flappy_high')||0,10)); gameOverUI.style.display='flex'; scoreLabel.parentElement.style.display='none';}
+
+function resetGame(){
+    gameStarted=false; gameOver=false; pipes=[]; particles=[]; frame=0; score=0; 
+    bird.x=80; bird.y=300; bird.vy=0; bird.rot=0;
+    startUI.style.display='flex'; gameOverUI.style.display='none'; scoreLabel.parentElement.style.display='';
+}
+function startGame(){
+    gameStarted=true; gameOver=false; startUI.style.display='none'; gameOverUI.style.display='none';
+    scoreLabel.parentElement.style.display=''; pipes=[]; particles=[]; frame=0; score=0; 
+    bird.y=internalH/2; bird.vy=0; generatePipe(); 
+}
+
+// Flap function
+function flap(){
+    if(!gameStarted) startGame();
+    if(!gameOver && gameStarted){ bird.vy = JUMP; bird.flapTimer=6; }
+    if(gameOver) playAgain();
+}
+
+document.addEventListener('keydown', e => { if(e.code==='Space') flap(); });
+canvas.addEventListener('touchstart', e=>{ e.preventDefault(); flap(); });
+canvas.addEventListener('mousedown', e=>{ e.preventDefault(); flap(); });
+
+startMainBtn.addEventListener('click',()=>{ if(!gameStarted) startGame(); });
+playAgainBtn.addEventListener('click',()=>{ playAgain(); });
+goHomeBtn.addEventListener('click',()=>{ resetGame(); });
+function playAgain(){ startGame(); }
+
+// Show game over & update high score
+function showGameOver(){
+    if(score>highScore){ highScore = score; localStorage.setItem('flappy_high', highScore);}
+    finalScore.textContent = score;
+    finalHigh.textContent = highScore;
+    document.getElementById('homeHighScoreNum').textContent = highScore;
+    gameOverUI.style.display='flex';
+    scoreLabel.parentElement.style.display='none';
+}
+
+// Update & draw
+function update(dt){
+    frame++;
+    cloudsA.forEach(c=>{c.x-=c.speed*dt; if(c.x<-200) c.x=internalW+200;});
+    cloudsB.forEach(c=>{c.x-=c.speed*dt; if(c.x<-300) c.x=internalW+300;});
+
+    if(!gameStarted||gameOver){
+        bird.flapTimer=Math.max(0,bird.flapTimer-dt); 
+        bird.vy=Math.sin(frame*0.08)*0.6; 
+        bird.y+=bird.vy*dt; 
+        bird.rot=Math.sin(frame*0.12)*0.25; 
+        return;
+    }
+
+    bird.vy += GRAVITY * dt;
+    bird.y += bird.vy * dt;
+    bird.rot = Math.max(-0.6, Math.min(0.9, bird.vy*0.06));
+
+    if(frame%90===0) generatePipe();
+
+    for(let i=pipes.length-1;i>=0;i--){
+        const p = pipes[i];
+        p.x -= 2.6*dt;
+        if(!p.passed && p.x+50<bird.x){ p.passed=true; score++; scoreLabel.textContent = score;}
+        if(p.x<-80) pipes.splice(i,1);
+
+        if(Math.random()<0.25){ 
+            particles.push(new FireParticle(p.x+25,p.top));
+            particles.push(new FireParticle(p.x+25,internalH-p.bottom));
+        }
+    }
+
+    for(let i=particles.length-1;i>=0;i--){
+        particles[i].update(dt);
+        if(particles[i].alpha<=0) particles.splice(i,1);
+    }
+
+    for(let p of pipes){
+        if(bird.x<p.x+50 && bird.x+bird.w>p.x){
+            if(bird.y<p.top || bird.y+bird.h>internalH-p.bottom){
+                gameOver=true; gameStarted=false; showGameOver();
+            }
+        }
+    }
+
+    if(bird.y+bird.h>=internalH || bird.y<=0){ gameOver=true; gameStarted=false; showGameOver();}
+}
 
 function draw(){
-  const g=ctx.createLinearGradient(0,0,0,internalH); g.addColorStop(0,'#70c5ce'); g.addColorStop(1,'#4fb0c8'); ctx.fillStyle=g; ctx.fillRect(0,0,internalW,internalH);
-  cloudsA.forEach(c=>{ctx.globalAlpha=c.alpha; drawCloud(c.x,c.y,c.w);});
-  cloudsB.forEach(c=>{ctx.globalAlpha=c.alpha*0.9; drawCloud(c.x,c.y,c.w*1.4);});
-  ctx.globalAlpha=1;
-  ctx.fillStyle='#2d6b7a'; ctx.fillRect(0,internalH-32,internalW,32);
-  for(let p of pipes){drawPipe(p.x,0,50,p.top,true); drawPipe(p.x,internalH-p.bottom,50,p.bottom,false);}
-  for(let part of particles) part.draw();
-  ctx.save(); ctx.translate(bird.x+bird.w/2,bird.y+bird.h/2); ctx.rotate(bird.rot);
-  ctx.globalAlpha=0.12; ctx.beginPath(); ctx.ellipse(0,36,bird.w*0.7,8,0,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-  ctx.globalAlpha=1;
-  if(birdImg.complete && birdImg.src){ctx.drawImage(birdImg,-bird.w/2,-bird.h/2,bird.w,bird.h);}else{ctx.fillStyle='yellow'; ctx.fillRect(-bird.w/2,-bird.h/2,bird.w,bird.h);}
-  ctx.restore();
-  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.font='120px System-ui'; ctx.textAlign='center'; ctx.fillText(score,internalW/2,internalH*0.26);
+    const g=ctx.createLinearGradient(0,0,0,internalH); 
+    g.addColorStop(0,'#70c5ce'); g.addColorStop(1,'#4fb0c8'); 
+    ctx.fillStyle=g; ctx.fillRect(0,0,internalW,internalH);
+
+    cloudsA.forEach(c=>{ctx.globalAlpha=c.alpha; drawCloud(c.x,c.y,c.w);});
+    cloudsB.forEach(c=>{ctx.globalAlpha=c.alpha*0.9; drawCloud(c.x,c.y,c.w*1.4);});
+    ctx.globalAlpha=1;
+
+    ctx.fillStyle='#2d6b7a'; ctx.fillRect(0,internalH-32,internalW,32);
+
+    for(let p of pipes){ drawPipe(p.x,0,50,p.top,true); drawPipe(p.x,internalH-p.bottom,50,p.bottom,false); }
+    for(let part of particles) part.draw();
+
+    ctx.save(); ctx.translate(bird.x+bird.w/2,bird.y+bird.h/2); ctx.rotate(bird.rot);
+    ctx.globalAlpha=0.12; ctx.beginPath(); ctx.ellipse(0,36,bird.w*0.7,8,0,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+    ctx.globalAlpha=1;
+    if(birdImg.complete && birdImg.src){ ctx.drawImage(birdImg,-bird.w/2,-bird.h/2,bird.w,bird.h); }
+    else{ ctx.fillStyle='yellow'; ctx.fillRect(-bird.w/2,-bird.h/2,bird.w,bird.h);}
+    ctx.restore();
+
+    ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.font='120px System-ui'; ctx.textAlign='center'; ctx.fillText(score,internalW/2,internalH*0.26);
 }
-function drawCloud(x,y,w){ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.ellipse(x,y,w*0.7,w*0.4,0,0,Math.PI*2); ctx.ellipse(x+w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2); ctx.ellipse(x-w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2); ctx.fill();}
-function drawPipe(x,y,w,h,isTop){const grad=ctx.createLinearGradient(x,y,x,y+h); grad.addColorStop(0,'#0a6b3a'); grad.addColorStop(1,'#0a8d4a'); ctx.fillStyle=grad; ctx.fillRect(x,y,w,h); ctx.fillStyle='#8be6a4'; const rimH=8; if(isTop) ctx.fillRect(x-2,y+h-rimH,w+4,rimH); else ctx.fillRect(x-2,y-rimH,w+4,rimH); ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x+w-8,y+4,8,h-8);}
-function frameLoop(){update(); draw(); requestAnimationFrame(frameLoop);}
-birdImg.onload=()=>{resetGame(); frameLoop();}
-birdImg.onerror=()=>{console.warn('bird image not found — using fallback rectangle.'); birdImg.src=''; resetGame(); frameLoop();}
+
+function drawCloud(x,y,w){
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.ellipse(x,y,w*0.7,w*0.4,0,0,Math.PI*2);
+    ctx.ellipse(x+w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
+    ctx.ellipse(x-w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
+    ctx.fill();
+}
+
+function drawPipe(x,y,w,h,isTop){
+    const grad=ctx.createLinearGradient(x,y,x,y+h);
+    grad.addColorStop(0,'#0a6b3a'); grad.addColorStop(1,'#0a8d4a'); 
+    ctx.fillStyle=grad; ctx.fillRect(x,y,w,h);
+    ctx.fillStyle='#8be6a4'; const rimH=8; 
+    if(isTop) ctx.fillRect(x-2,y+h-rimH,w+4,rimH); 
+    else ctx.fillRect(x-2,y-rimH,w+4,rimH);
+    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x+w-8,y+4,8,h-8);
+}
+
+// Frame loop with delta time
+let lastTime=0;
+function frameLoop(time){
+    const dt = Math.min((time-lastTime)/16.666, 3);
+    lastTime = time;
+    update(dt);
+    draw();
+    requestAnimationFrame(frameLoop);
+}
+
+birdImg.onload=()=>{ resetGame(); frameLoop(); }
+birdImg.onerror=()=>{ console.warn('bird image not found — using fallback rectangle.'); birdImg.src=''; resetGame(); frameLoop(); }
 </script>
 </body>
 </html>
