@@ -16,8 +16,7 @@ html,body{height:100%;background:linear-gradient(180deg,#0f172a 0%, #05668d 60%)
 #stage{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;}
 canvas{border-radius:18px;box-shadow:var(--shadow);background: linear-gradient(180deg,#70c5ce 0%, #5fbad0 100%);display:block;touch-action:none;}
 #titleBar{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:12px;align-items:center;pointer-events:auto;}
-/* REMOVED FLAPPY BIRD TITLE HERE */
-#brand{display:none;}
+#brand{display:none;} /* removed duplicate title */
 .btn{background: var(--accent);color: #111;padding:10px 20px;border-radius:12px;cursor:pointer;backdrop-filter: blur(6px);box-shadow: 0 10px 26px rgba(255,140,120,0.18);font-weight:600;border:none;}
 .overlay{position: absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:9998;pointer-events:auto;}
 #startUI, #gameOverUI{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;backdrop-filter: blur(10px);background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.45));color:white;text-align:center;}
@@ -37,7 +36,7 @@ canvas{border-radius:18px;box-shadow:var(--shadow);background: linear-gradient(1
   <div id="titleBar"></div>
 
   <div id="scoreLabel">Score: <span id="scoreNum">0</span></div>
-  <canvas id="gameCanvas" width="400" height="600"></canvas>
+  <canvas id="gameCanvas" width="400" height="600" aria-label="Flappy bird game"></canvas>
 
   <div id="startUI" class="overlay" style="display:flex;">
     <div style="display:flex;flex-direction:column;align-items:center;gap:20px;">
@@ -62,274 +61,401 @@ canvas{border-radius:18px;box-shadow:var(--shadow);background: linear-gradient(1
 </div>
 
 <script>
-const internalW=400, internalH=600;
-const canvas=document.getElementById('gameCanvas'), ctx=canvas.getContext('2d',{alpha:false});
-const startUI=document.getElementById('startUI'), gameOverUI=document.getElementById('gameOverUI');
-const startMainBtn=document.getElementById('startMainBtn'), playAgainBtn=document.getElementById('playAgainBtn'), goHomeBtn=document.getElementById('goHomeBtn');
-const scoreLabel=document.getElementById('scoreNum'), finalScore=document.getElementById('finalScore'), finalHigh=document.getElementById('finalHigh');
+/* ---------- CORE CONFIG ---------- */
+const internalW = 400, internalH = 600;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false });
 
-let scale=1;
+const startUI = document.getElementById('startUI'), gameOverUI = document.getElementById('gameOverUI');
+const startMainBtn = document.getElementById('startMainBtn'), playAgainBtn = document.getElementById('playAgainBtn'), goHomeBtn = document.getElementById('goHomeBtn');
+const scoreLabel = document.getElementById('scoreNum'), finalScore = document.getElementById('finalScore'), finalHigh = document.getElementById('finalHigh');
+const homeHighScoreNum = document.getElementById('homeHighScoreNum');
+
+let dpr = Math.max(1, window.devicePixelRatio || 1);
+
+/* Resize: keep internal coordinate system constant (400x600),
+   but scale drawing for crispness using devicePixelRatio.
+   CSS size adapts to viewport while physics still works in internal coords.
+*/
 function resize(){
-  const padding=Math.min(window.innerWidth,24), maxW=window.innerWidth-padding, maxH=window.innerHeight-80;
-  const targetRatio=internalW/internalH;
-  let cssW=maxW, cssH=cssW/targetRatio;
-  if(cssH>maxH){cssH=maxH; cssW=cssH*targetRatio;}
-  canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
-  const dpr=Math.max(1,window.devicePixelRatio||1);
-  canvas.width=internalW*dpr; canvas.height=internalH*dpr;
-  scale=(cssW/internalW)*dpr;
-  ctx.setTransform(scale,0,0,scale,0,0);
+  const padding = Math.min(window.innerWidth, 24);
+  const maxW = window.innerWidth - padding;
+  const maxH = window.innerHeight - 80;
+  const targetRatio = internalW / internalH;
+  let cssW = maxW, cssH = Math.round(cssW / targetRatio);
+  if (cssH > maxH){ cssH = maxH; cssW = Math.round(cssH * targetRatio); }
+
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+
+  dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = internalW * dpr;
+  canvas.height = internalH * dpr;
+
+  // scale drawing to device pixels but coordinates use internal units
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-window.addEventListener('resize',resize); resize();
+window.addEventListener('resize', resize);
+resize();
 
-/* --------- NEW IMAGES --------- */
-const birdImg=new Image();
-birdImg.src='https://i.imgur.com/2K0fG0S.png'; // classic flappy bird
-
-const enemyImg=new Image();
-enemyImg.src='https://i.imgur.com/ode9YQd.png'; // enemy bird
-
-/* --------- SOUND EFFECTS --------- */
+/* ---------- SOUNDS (simple) ---------- */
 const sndScore = new Audio("https://actions.google.com/sounds/v1/cartoon/pop.ogg");
 const sndHit   = new Audio("https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg");
 
-let gameStarted=false, gameOver=false, GRAVITY=0.6, JUMP=-10;
-let bird={x:80,y:300,w:40,h:40,vy:0,rot:0,flapTimer:0};
-let pipes=[], particles=[], enemies=[], frame=0, score=0;
+/* ---------- GAME STATE ---------- */
+let gameStarted = false, gameOver = false;
 
-// High Score
+// velocities and physics measured per frame unit (frame ~ 1/60s).
+// these constants tuned to feel similar across devices because we use frame-based dt.
+let GRAVITY = 0.7;
+let JUMP = -10.5;
+
+let bird = { x: 80, y: 300, w: 40, h: 32, vy: 0, rot: 0, flapTimer: 0 };
+let pipes = [], particles = [], enemies = [], frame = 0, score = 0;
+
+// dynamic pipe spawn timing (frames)
+let framesSinceLastPipe = 0;
+let nextPipeIn = 100; // initial
+
+/* High Score */
 let highScore = parseInt(localStorage.getItem('flappy_high') || '0', 10);
-document.getElementById('homeHighScoreNum').textContent = highScore;
+homeHighScoreNum.textContent = highScore;
 
-const cloudsA=[], cloudsB=[];
+/* Clouds */
+const cloudsA = [], cloudsB = [];
 function spawnClouds(){
   for(let i=0;i<6;i++) cloudsA.push({x:Math.random()*internalW,y:Math.random()*140,w:60+Math.random()*80,speed:0.2+Math.random()*0.3,alpha:0.12+Math.random()*0.15});
   for(let i=0;i<4;i++) cloudsB.push({x:Math.random()*internalW,y:160+Math.random()*120,w:80+Math.random()*140,speed:0.35+Math.random()*0.4,alpha:0.06+Math.random()*0.08});
 }
 spawnClouds();
 
-/* ---------- PIPE GENERATOR ---------- */
-function generatePipe(){
-  const gap=150, topH=Math.random()*(internalH-gap-160)+50, bottomH=internalH-topH-gap;
-  pipes.push({x:internalW+10,top:topH,bottom:bottomH,passed:false});
-}
-
-/* ---------- ENEMY BIRD SPAWN ---------- */
-function spawnEnemy(){
-  enemies.push({
-    x: internalW + 40,
-    y: Math.random() * (internalH - 120) + 60,
-    w: 32,
-    h: 32,
-    speed: 2 + Math.random() * 1.2
-  });
-}
-
+/* ---------- FIRE PARTICLES (unchanged) ---------- */
 class FireParticle{
-    constructor(x,y){
-        this.x = x + (Math.random()*20-10);
-        this.y = y;
-        this.vy = -1-Math.random()*1.5;
-        this.vx = Math.random()*1.2-0.6;
-        this.r = 2+Math.random()*4;
-        this.alpha = 1;
-        this.life = 20 + Math.random()*20;
-    }
-    update(dt){
-        this.x += this.vx*dt*2;
-        this.y += this.vy*dt*2;
-        this.alpha -= 0.03*dt;
-        this.r *= 0.96;
-    }
-    draw(){
-        ctx.beginPath();
-        ctx.fillStyle=`rgba(255,${Math.floor(80+Math.random()*120)},0,${this.alpha})`;
-        ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
-        ctx.fill();
-    }
+  constructor(x,y){
+    this.x = x + (Math.random()*20-10);
+    this.y = y;
+    this.vy = -1 - Math.random()*1.5;
+    this.vx = Math.random()*1.2-0.6;
+    this.r = 2 + Math.random()*4;
+    this.alpha = 1;
+    this.life = 20 + Math.random()*20;
+  }
+  update(dt){
+    this.x += this.vx*dt*2;
+    this.y += this.vy*dt*2;
+    this.alpha -= 0.03*dt;
+    this.r *= 0.96;
+  }
+  draw(){
+    ctx.beginPath();
+    ctx.fillStyle=`rgba(255,${Math.floor(80+Math.random()*120)},0,${this.alpha})`;
+    ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    ctx.fill();
+  }
 }
 
+/* ---------- PIPE & ENEMY LOGIC ---------- */
+/* generatePipe creates a pipe pair and also (optionally) creates an enemy bird inside the gap */
+function generatePipe(){
+  const gapMin = 130;
+  const gapMax = 170;
+  const gap = gapMin + Math.random()*(gapMax-gapMin); // gap size larger on average for mobile friendliness
+  const topH = Math.random()*(internalH-gap-180) + 50; // top pipe height
+  const bottomH = internalH - topH - gap;
+  const pipe = { x: internalW + 10, top: topH, bottom: bottomH, passed: false, gap: gap, w: 50 };
+  pipes.push(pipe);
+
+  // chance to spawn an enemy inside this gap (so it blocks the gap)
+  if(Math.random() < 0.7){ // 70% chance
+    const enemy = {
+      x: pipe.x + 10, // starts just after pipe spawn (will move left)
+      y: topH + (gap*0.5) - 16 + (Math.random()*20-10), // center of gap ± jitter
+      w: 32,
+      h: 24,
+      speed: 2.6 + Math.random()*0.8,
+      yaw: Math.random()*0.02 - 0.01 // small wobble for natural movement
+    };
+    enemies.push(enemy);
+  }
+
+  // randomize next pipe interval (frames). Increase interval for phones by detecting narrow CSS width
+  const cssWidth = parseInt(canvas.style.width || internalW, 10);
+  const base = cssWidth <= 360 ? 120 : 100; // mobile gets bigger spacing
+  nextPipeIn = base + Math.floor(Math.random()*40);
+  framesSinceLastPipe = 0;
+}
+
+/* ---------- RESET / START ---------- */
 function resetGame(){
-    gameStarted=false; gameOver=false; pipes=[]; particles=[]; enemies=[]; frame=0; score=0; 
-    bird.x=80; bird.y=300; bird.vy=0; bird.rot=0;
-    startUI.style.display='flex'; gameOverUI.style.display='none'; scoreLabel.parentElement.style.display='';
+  gameStarted=false; gameOver=false; pipes=[]; particles=[]; enemies=[]; frame=0; score=0;
+  bird.x=80; bird.y=internalH/2; bird.vy=0; bird.rot=0; bird.flapTimer=0;
+  startUI.style.display='flex'; gameOverUI.style.display='none'; scoreLabel.parentElement.style.display='';
 }
 function startGame(){
-    gameStarted=true; gameOver=false; startUI.style.display='none'; gameOverUI.style.display='none';
-    scoreLabel.parentElement.style.display=''; pipes=[]; particles=[]; enemies=[]; frame=0; score=0; 
-    bird.y=internalH/2; bird.vy=0; generatePipe(); 
+  gameStarted=true; gameOver=false; startUI.style.display='none'; gameOverUI.style.display='none';
+  scoreLabel.parentElement.style.display=''; pipes=[]; particles=[]; enemies=[]; frame=0; score=0;
+  bird.y = internalH/2; bird.vy = 0;
+  framesSinceLastPipe = 0;
+  nextPipeIn = 100;
+  generatePipe(); // start with a pipe
 }
 
+/* ---------- INPUT ---------- */
 function flap(){
-    if(!gameStarted) startGame();
-    if(!gameOver && gameStarted){ bird.vy = JUMP; bird.flapTimer=6; }
-    if(gameOver) playAgain();
+  if(!gameStarted) startGame();
+  if(!gameOver && gameStarted){
+    bird.vy = JUMP;
+    bird.flapTimer = 6;
+  }
+  if(gameOver) playAgain();
 }
+document.addEventListener('keydown', e => { if(e.code === 'Space' || e.key === ' ') { e.preventDefault(); flap(); } });
 
-document.addEventListener('keydown', e => { if(e.code==='Space') flap(); });
-canvas.addEventListener('touchstart', e=>{ e.preventDefault(); flap(); });
-canvas.addEventListener('mousedown', e=>{ e.preventDefault(); flap(); });
+// pointerdown covers mouse, touch, stylus
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); flap(); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); }, { passive: false }); // handled by pointerdown
 
 startMainBtn.addEventListener('click',()=>{ if(!gameStarted) startGame(); });
 playAgainBtn.addEventListener('click',()=>{ playAgain(); });
 goHomeBtn.addEventListener('click',()=>{ resetGame(); });
 function playAgain(){ startGame(); }
 
+/* ---------- GAME OVER ---------- */
 function showGameOver(){
-    if(score>highScore){ highScore = score; localStorage.setItem('flappy_high', highScore);}
-    finalScore.textContent = score;
-    finalHigh.textContent = highScore;
-    document.getElementById('homeHighScoreNum').textContent = highScore;
-    gameOverUI.style.display='flex';
-    scoreLabel.parentElement.style.display='none';
-
-    sndHit.play();
+  if(score > highScore){ highScore = score; localStorage.setItem('flappy_high', highScore); }
+  finalScore.textContent = score;
+  finalHigh.textContent = highScore;
+  homeHighScoreNum.textContent = highScore;
+  gameOverUI.style.display = 'flex';
+  scoreLabel.parentElement.style.display = 'none';
+  try { sndHit.currentTime = 0; sndHit.play(); } catch(e){}
 }
 
+/* ---------- UPDATE & COLLISION ---------- */
 function update(dt){
-    frame++;
+  frame++;
 
-    cloudsA.forEach(c=>{c.x-=c.speed*dt; if(c.x<-200) c.x=internalW+200;});
-    cloudsB.forEach(c=>{c.x-=c.speed*dt; if(c.x<-300) c.x=internalW+300;});
+  // clouds
+  cloudsA.forEach(c=>{ c.x -= c.speed * dt; if(c.x < -200) c.x = internalW + 200; });
+  cloudsB.forEach(c=>{ c.x -= c.speed * dt; if(c.x < -300) c.x = internalW + 300; });
 
-    if(!gameStarted||gameOver){
-        bird.flapTimer=Math.max(0,bird.flapTimer-dt); 
-        bird.vy=Math.sin(frame*0.08)*0.6; 
-        bird.y+=bird.vy*dt; 
-        bird.rot=Math.sin(frame*0.12)*0.25; 
-        return;
-    }
-
-    bird.vy += GRAVITY * dt;
+  if(!gameStarted || gameOver){
+    bird.flapTimer = Math.max(0, bird.flapTimer - dt);
+    bird.vy = Math.sin(frame*0.08)*0.6;
     bird.y += bird.vy * dt;
-    bird.rot = Math.max(-0.6, Math.min(0.9, bird.vy*0.06));
+    bird.rot = Math.sin(frame*0.12) * 0.25;
+    return;
+  }
 
-    if(frame%90===0) generatePipe();
-    if(frame%120===0) spawnEnemy();
+  // physics (frame-based dt)
+  bird.vy += GRAVITY * dt;
+  bird.y += bird.vy * dt;
+  bird.rot = Math.max(-0.6, Math.min(0.9, bird.vy * 0.06));
 
-    // Pipes
-    for(let i=pipes.length-1;i>=0;i--){
-        const p = pipes[i];
-        p.x -= 2.6*dt;
+  // pipes spawning via frame counter for better spacing control
+  framesSinceLastPipe++;
+  if(framesSinceLastPipe >= nextPipeIn) generatePipe();
 
-        if(!p.passed && p.x+50<bird.x){
-            p.passed=true;
-            score++;
-            scoreLabel.textContent = score;
-            sndScore.play();
-        }
+  // update pipes
+  for(let i = pipes.length - 1; i >= 0; i--){
+    const p = pipes[i];
+    p.x -= 2.6 * dt; // pipe speed
 
-        if(p.x<-80) pipes.splice(i,1);
-
-        if(Math.random()<0.25){ 
-            particles.push(new FireParticle(p.x+25,p.top));
-            particles.push(new FireParticle(p.x+25,internalH-p.bottom));
-        }
+    if(!p.passed && p.x + p.w < bird.x){
+      p.passed = true;
+      score++;
+      scoreLabel.textContent = score;
+      try { sndScore.currentTime = 0; sndScore.play(); } catch(e){}
     }
 
-    // Fire particles
-    for(let i=particles.length-1;i>=0;i--){
-        particles[i].update(dt);
-        if(particles[i].alpha<=0) particles.splice(i,1);
+    if(p.x < -80) pipes.splice(i,1);
+
+    // occasional fire
+    if(Math.random() < 0.18){
+      particles.push(new FireParticle(p.x + 25, p.top));
+      particles.push(new FireParticle(p.x + 25, internalH - p.bottom));
+    }
+  }
+
+  // update enemies (these are inside pipe gaps)
+  for(let i = enemies.length - 1; i >= 0; i--){
+    const e = enemies[i];
+    e.x -= e.speed * dt;
+    e.y += Math.sin(frame*0.04 + i) * e.yaw * dt * 40; // slight wobble
+
+    // collision with bird
+    if(bird.x < e.x + e.w && bird.x + bird.w > e.x && bird.y < e.y + e.h && bird.y + bird.h > e.y){
+      gameOver = true; gameStarted = false; showGameOver();
     }
 
-    // Enemy birds
-    for(let i=enemies.length-1;i>=0;i--){
-        const e=enemies[i];
-        e.x -= e.speed * dt;
+    if(e.x < -80) enemies.splice(i, 1);
+  }
 
-        if(
-            bird.x < e.x + e.w &&
-            bird.x + bird.w > e.x &&
-            bird.y < e.y + e.h &&
-            bird.y + bird.h > e.y
-        ){
-            gameOver=true; gameStarted=false; showGameOver();
-        }
+  // update particles
+  for(let i = particles.length - 1; i >= 0; i--){
+    particles[i].update(dt);
+    if(particles[i].alpha <= 0) particles.splice(i,1);
+  }
 
-        if(e.x < -60) enemies.splice(i,1);
+  // pipe collision
+  for(let p of pipes){
+    if(bird.x < p.x + p.w && bird.x + bird.w > p.x){
+      if(bird.y < p.top || bird.y + bird.h > internalH - p.bottom){
+        gameOver = true; gameStarted = false; showGameOver();
+      }
     }
+  }
 
-    // Pipe collision
-    for(let p of pipes){
-        if(bird.x<p.x+50 && bird.x+bird.w>p.x){
-            if(bird.y<p.top || bird.y+bird.h>internalH-p.bottom){
-                gameOver=true; gameStarted=false; showGameOver();
-            }
-        }
-    }
-
-    // Ground or ceiling
-    if(bird.y+bird.h>=internalH || bird.y<=0){
-        gameOver=true; gameStarted=false; showGameOver();
-    }
+  // ground/ceiling
+  if(bird.y + bird.h >= internalH || bird.y <= 0){
+    gameOver = true; gameStarted = false; showGameOver();
+  }
 }
 
-function draw(){
-    const g=ctx.createLinearGradient(0,0,0,internalH); 
-    g.addColorStop(0,'#70c5ce'); g.addColorStop(1,'#4fb0c8'); 
-    ctx.fillStyle=g; ctx.fillRect(0,0,internalW,internalH);
+/* ---------- RENDER ---------- */
+/* Draw a simple flappy bird with canvas so no external image required */
+function drawBird(cx, cy, w, h, rot){
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rot);
+  // body
+  ctx.beginPath();
+  ctx.ellipse(0,0,w*0.45,h*0.5,0,0,Math.PI*2);
+  ctx.fillStyle = '#ffd54a';
+  ctx.fill();
+  // belly
+  ctx.beginPath();
+  ctx.ellipse(-w*0.05,0,w*0.35,h*0.35,0,0,Math.PI*2);
+  ctx.fillStyle = '#fff0d6';
+  ctx.fill();
+  // wing
+  ctx.beginPath();
+  ctx.ellipse(-w*0.02,h*0.05,w*0.25,h*0.12,-0.6,0,Math.PI*2);
+  ctx.fillStyle = '#ffb733';
+  ctx.fill();
+  // eye
+  ctx.beginPath();
+  ctx.arc(w*0.18, -h*0.08, w*0.07, 0, Math.PI*2);
+  ctx.fillStyle = '#000';
+  ctx.fill();
+  // beak
+  ctx.beginPath();
+  ctx.moveTo(w*0.36, 0);
+  ctx.lineTo(w*0.58, -h*0.08);
+  ctx.lineTo(w*0.58, h*0.08);
+  ctx.closePath();
+  ctx.fillStyle = '#f39c12';
+  ctx.fill();
+  ctx.restore();
+}
 
-    cloudsA.forEach(c=>{ctx.globalAlpha=c.alpha; drawCloud(c.x,c.y,c.w);});
-    cloudsB.forEach(c=>{ctx.globalAlpha=c.alpha*0.9; drawCloud(c.x,c.y,c.w*1.4);});
-    ctx.globalAlpha=1;
-
-    ctx.fillStyle='#2d6b7a'; ctx.fillRect(0,internalH-32,internalW,32);
-
-    for(let p of pipes){ drawPipe(p.x,0,50,p.top,true); drawPipe(p.x,internalH-p.bottom,50,p.bottom,false); }
-
-    for(let part of particles) part.draw();
-
-    // enemy birds
-    for(let e of enemies){
-        if(enemyImg.complete){
-            ctx.drawImage(enemyImg, e.x, e.y, e.w, e.h);
-        } else {
-            ctx.fillStyle="red";
-            ctx.fillRect(e.x, e.y, e.w, e.h);
-        }
-    }
-
-    ctx.save(); ctx.translate(bird.x+bird.w/2,bird.y+bird.h/2); ctx.rotate(bird.rot);
-    ctx.globalAlpha=0.12; ctx.beginPath(); ctx.ellipse(0,36,bird.w*0.7,8,0,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-    ctx.globalAlpha=1;
-    if(birdImg.complete && birdImg.src){ ctx.drawImage(birdImg,-bird.w/2,-bird.h/2,bird.w,bird.h); }
-    else{ ctx.fillStyle='yellow'; ctx.fillRect(-bird.w/2,-bird.h/2,bird.w,bird.h);}
-    ctx.restore();
-
-    ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.font='120px System-ui'; ctx.textAlign='center'; ctx.fillText(score,internalW/2,internalH*0.26);
+/* Draw enemy bird (smaller) */
+function drawEnemy(e){
+  ctx.save();
+  ctx.translate(e.x + e.w*0.5, e.y + e.h*0.5);
+  const rot = Math.sin((e.x + e.y) * 0.01) * 0.2;
+  ctx.rotate(rot);
+  ctx.beginPath();
+  ctx.ellipse(0,0,e.w*0.35,e.h*0.45,0,0,Math.PI*2);
+  ctx.fillStyle = '#e04b4b';
+  ctx.fill();
+  // beak
+  ctx.beginPath();
+  ctx.moveTo(e.w*0.25, 0);
+  ctx.lineTo(e.w*0.45, -e.h*0.08);
+  ctx.lineTo(e.w*0.45, e.h*0.08);
+  ctx.closePath();
+  ctx.fillStyle = '#ffb037';
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawCloud(x,y,w){
-    ctx.fillStyle='rgba(255,255,255,0.85)';
-    ctx.beginPath();
-    ctx.ellipse(x,y,w*0.7,w*0.4,0,0,Math.PI*2);
-    ctx.ellipse(x+w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
-    ctx.ellipse(x-w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
-    ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(x,y,w*0.7,w*0.4,0,0,Math.PI*2);
+  ctx.ellipse(x+w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
+  ctx.ellipse(x-w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
+  ctx.fill();
 }
 
 function drawPipe(x,y,w,h,isTop){
-    const grad=ctx.createLinearGradient(x,y,x,y+h);
-    grad.addColorStop(0,'#0a6b3a'); grad.addColorStop(1,'#0a8d4a'); 
-    ctx.fillStyle=grad; ctx.fillRect(x,y,w,h);
-    ctx.fillStyle='#8be6a4'; const rimH=8; 
-    if(isTop) ctx.fillRect(x-2,y+h-rimH,w+4,rimH); 
-    else ctx.fillRect(x-2,y-rimH,w+4,rimH);
-    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x+w-8,y+4,8,h-8);
+  const grad = ctx.createLinearGradient(x,y,x,y+h);
+  grad.addColorStop(0,'#0a6b3a'); grad.addColorStop(1,'#0a8d4a');
+  ctx.fillStyle = grad; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle = '#8be6a4'; const rimH = 8;
+  if(isTop) ctx.fillRect(x-2,y+h-rimH,w+4,rimH);
+  else ctx.fillRect(x-2,y-rimH,w+4,rimH);
+  ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x+w-8,y+4,8,h-8);
 }
 
-let lastTime=0;
+function draw(){
+  // sky
+  const g = ctx.createLinearGradient(0,0,0,internalH);
+  g.addColorStop(0,'#70c5ce'); g.addColorStop(1,'#4fb0c8');
+  ctx.fillStyle = g; ctx.fillRect(0,0,internalW,internalH);
+
+  // clouds
+  cloudsA.forEach(c=>{ ctx.globalAlpha = c.alpha; drawCloud(c.x, c.y, c.w); });
+  cloudsB.forEach(c=>{ ctx.globalAlpha = c.alpha*0.9; drawCloud(c.x, c.y, c.w*1.4); });
+  ctx.globalAlpha = 1;
+
+  // ground
+  ctx.fillStyle = '#2d6b7a'; ctx.fillRect(0, internalH - 32, internalW, 32);
+
+  // pipes
+  for(const p of pipes) drawPipe(p.x, 0, p.w, p.top, true), drawPipe(p.x, internalH - p.bottom, p.w, p.bottom, false);
+
+  // fire particles
+  for(const part of particles) part.draw();
+
+  // enemies
+  for(const e of enemies) drawEnemy(e);
+
+  // bird shadow
+  ctx.save();
+  ctx.translate(bird.x + bird.w*0.5, bird.y + bird.h*0.5);
+  ctx.rotate(bird.rot);
+  ctx.globalAlpha = 0.12;
+  ctx.beginPath();
+  ctx.ellipse(0, 36, bird.w*0.7, 8, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#000'; ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // bird (drawn with function)
+  drawBird(bird.x + bird.w*0.5, bird.y + bird.h*0.5, bird.w, bird.h, bird.rot);
+
+  // big score watermark
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.font='120px System-ui'; ctx.textAlign='center'; ctx.fillText(score, internalW/2, internalH*0.26);
+}
+
+/* ---------- FRAME LOOP (frame-based dt) ---------- */
+let lastTime = performance.now();
 function frameLoop(time){
-    const dt = Math.min((time-lastTime)/16.666, 3);
-    lastTime = time;
-    update(dt);
-    draw();
-    requestAnimationFrame(frameLoop);
+  // dt measured in frames (1 frame ~ 16.666ms) so constants tuned to feel consistent
+  const rawMs = time - lastTime;
+  const clamped = Math.min(rawMs, 100); // clamp big jumps
+  const dt = Math.max(1, clamped / 16.666); // dt roughly in 60fps frame units
+  lastTime = time;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(frameLoop);
 }
 
-birdImg.onload=()=>{ resetGame(); frameLoop(); }
-birdImg.onerror=()=>{ console.warn('bird image not found — using fallback rectangle.'); birdImg.src=''; resetGame(); frameLoop(); }
+/* ---------- START / LOAD ---------- */
+resetGame();
+requestAnimationFrame(frameLoop);
+
+/* ensure audio allowed on mobile — resume on first user gesture */
+function resumeAudio() {
+  try { sndScore.play().then(()=>sndScore.pause()); } catch(e){}
+  try { sndHit.play().then(()=>sndHit.pause()); } catch(e){}
+  window.removeEventListener('pointerdown', resumeAudio);
+}
+window.addEventListener('pointerdown', resumeAudio);
 </script>
 </body>
 </html>
