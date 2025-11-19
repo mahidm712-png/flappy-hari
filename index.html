@@ -256,10 +256,22 @@ function draw(){
     drawBird(bird.x+bird.w*0.5,bird.y+bird.h*0.5,bird.w,bird.h,bird.rot);
 }
 
+// ---------------- FRAME RATE FIX FOR MOBILE AND PC ----------------
 let lastTime = performance.now();
-function frameLoop(time){const rawMs=time-lastTime; const clamped=Math.min(rawMs,100); const dt=Math.max(1,clamped/16.666); lastTime=time; update(dt); draw(); requestAnimationFrame(frameLoop);}
+function frameLoop(time){
+    let rawMs = time - lastTime;
+    lastTime = time;
+    let dt = rawMs / 16.666; // normalize to ~60fps
+    dt = Math.min(dt, 4); // cap to avoid huge jumps
+    update(dt);
+    draw();
+    requestAnimationFrame(frameLoop);
+}
+requestAnimationFrame(frameLoop);
+// -------------------------------------------------------------------
 
-resize(); resetGame(); requestAnimationFrame(frameLoop);
+resize(); resetGame();
+
 startMainBtn.addEventListener('click',()=>{if(!gameStarted)startGame();});
 playAgainBtn.addEventListener('click',()=>{startGame();});
 goHomeBtn.addEventListener('click',()=>{resetGame();});
