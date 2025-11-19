@@ -256,18 +256,26 @@ function draw(){
     drawBird(bird.x+bird.w*0.5,bird.y+bird.h*0.5,bird.w,bird.h,bird.rot);
 }
 
-// ---------------- FRAME RATE FIX FOR MOBILE AND PC ----------------
 let lastTime = performance.now();
+const FIXED_DT = 1; // 1 unit = 16.666ms (~60FPS)
+let accumulator = 0;
+
 function frameLoop(time){
     let rawMs = time - lastTime;
     lastTime = time;
-    let dt = rawMs / 16.666; // normalize to ~60fps
-    dt = Math.min(dt, 4); // cap to avoid huge jumps
-    update(dt);
-    draw();
+    accumulator += rawMs / 16.666; // convert ms to frame units
+
+    while(accumulator >= FIXED_DT){
+        update(FIXED_DT); // always use fixed dt
+        accumulator -= FIXED_DT;
+    }
+
+    draw(); // draw every frame, independent of physics
     requestAnimationFrame(frameLoop);
 }
+
 requestAnimationFrame(frameLoop);
+
 // -------------------------------------------------------------------
 
 resize(); resetGame();
@@ -278,3 +286,4 @@ goHomeBtn.addEventListener('click',()=>{resetGame();});
 </script>
 </body>
 </html>
+
