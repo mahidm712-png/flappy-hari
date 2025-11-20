@@ -33,7 +33,7 @@ canvas{border-radius:18px;box-shadow:var(--shadow);background: linear-gradient(1
 <div id="stage">
   <div id="titleBar"></div>
 
-  <div id="scoreLabel">Score: <span id="scoreNum">0</span></div>
+  <div id="scoreLabel">Score: <span id="scoreNum">0</span> | Bird Hit Points: <span id="enemyScore">0</span></div>
   <canvas id="gameCanvas" width="400" height="600" aria-label="Flappy bird game"></canvas>
 
   <div id="startUI" class="overlay" style="display:flex;">
@@ -67,17 +67,22 @@ const startUI = document.getElementById('startUI'), gameOverUI = document.getEle
 const startMainBtn = document.getElementById('startMainBtn'), playAgainBtn = document.getElementById('playAgainBtn'), goHomeBtn = document.getElementById('goHomeBtn');
 const scoreLabel = document.getElementById('scoreNum'), finalScore = document.getElementById('finalScore'), finalHigh = document.getElementById('finalHigh');
 const homeHighScoreNum = document.getElementById('homeHighScoreNum');
+const enemyScoreLabel = document.getElementById('enemyScore');
 
 let dpr = Math.max(1, window.devicePixelRatio || 1);
 
-const sndScore = new Audio("adi.mp3"); // Your custom audio
+const sndScore = new Audio("point.mp3"); 
 const sndHit   = new Audio("darshan.mp3");
+const sndFlap  = new Audio("flap.mp3");      // Flap sound
+const sndHitPipe = new Audio("hit.mp3");     // Hit sound before darshan.mp3
 let audioUnlocked = false;
 
-// Unlock audio on first interaction
+// Audio unlock
 function unlockAudio() {
     if(!audioUnlocked){
         sndScore.play().then(()=>sndScore.pause()).catch(()=>{});
+        sndFlap.play().then(()=>sndFlap.pause()).catch(()=>{});
+        sndHitPipe.play().then(()=>sndHitPipe.pause()).catch(()=>{});
         audioUnlocked = true;
         window.removeEventListener('pointerdown', unlockAudio);
         window.removeEventListener('keydown', unlockAudio);
@@ -87,9 +92,10 @@ window.addEventListener('pointerdown', unlockAudio);
 window.addEventListener('keydown', unlockAudio);
 
 let gameStarted=false, gameOver=false;
-let GRAVITY=0.7, JUMP=-10.5;
+let waitingForFirstFlap = false;
+let GRAVITY=0.45, JUMP=-8.5;
 let bird={x:80,y:300,w:40,h:32,vy:0,rot:0,flapTimer:0};
-let pipes=[], enemies=[], frame=0, score=0;
+let pipes=[], enemies=[], frame=0, score=0, enemyScore=0;
 let framesSinceLastPipe=0;
 let nextPipeIn=100;
 let highScore=parseInt(localStorage.getItem('flappy_high')||'0',10);
@@ -102,11 +108,9 @@ function resize(){
     const targetRatio = internalW/internalH;
     let cssW = maxW, cssH=Math.round(cssW/targetRatio);
     if(cssH>maxH){ cssH=maxH; cssW=Math.round(cssH*targetRatio);}
-    canvas.style.width=cssW+'px';
-    canvas.style.height=cssH+'px';
+    canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
     dpr = Math.max(1, window.devicePixelRatio || 1);
-    canvas.width = internalW*dpr;
-    canvas.height = internalH*dpr;
+    canvas.width = internalW*dpr; canvas.height = internalH*dpr;
     ctx.setTransform(dpr,0,0,dpr,0,0);
 }
 window.addEventListener('resize', resize);
@@ -124,10 +128,14 @@ function generatePipe(){
     const bottomH=internalH-topH-gap;
     const pipe={x:internalW+10, top:topH, bottom:bottomH, passed:false, w:50};
     pipes.push(pipe);
-    if(Math.random()<0.7){
+
+    const enemyChance = Math.random();
+    if(enemyChance < 0.7){
         const enemyY=Math.random()<0.5 ? topH+10 : internalH-bottomH-24-10;
-        enemies.push({x:pipe.x+10,y:enemyY,w:32,h:24,speed:3+Math.random()*1,verticalAmp:12+Math.random()*8,verticalFreq:0.05+Math.random()*0.05});
+        const isGolden = Math.random()<0.1; // 10% chance
+        enemies.push({x:pipe.x+10,y:enemyY,w:32,h:24,speed:3+Math.random()*1,verticalAmp:12+Math.random()*8,verticalFreq:0.05+Math.random()*0.05, golden:isGolden});
     }
+
     const cssWidth=parseInt(canvas.style.width||internalW,10);
     const base = cssWidth<=360?140:100;
     nextPipeIn = base+Math.floor(Math.random()*30);
@@ -135,17 +143,48 @@ function generatePipe(){
 }
 
 function resetGame(){
-    gameStarted=false; gameOver=false; pipes=[]; enemies=[]; frame=0; score=0;
+    gameStarted=false; gameOver=false; pipes=[]; enemies=[]; frame=0; score=0; enemyScore=0;
+    waitingForFirstFlap = false;
     bird.x=80; bird.y=internalH/2; bird.vy=0; bird.rot=0; bird.flapTimer=0;
     startUI.style.display='flex'; gameOverUI.style.display='none'; scoreLabel.parentElement.style.display='';
-}
-function startGame(){
-    gameStarted=true; gameOver=false; startUI.style.display='none'; gameOverUI.style.display='none';
-    scoreLabel.parentElement.style.display=''; pipes=[]; enemies=[]; frame=0; score=0;
-    bird.y = internalH/2; bird.vy=0; framesSinceLastPipe=0; generatePipe();
+    enemyScoreLabel.textContent = enemyScore;
 }
 
-function flap(){ if(!gameStarted) startGame(); if(!gameOver && gameStarted){ bird.vy = JUMP; bird.flapTimer=6; } if(gameOver) playAgain(); }
+function startGame(){
+    gameStarted = true;
+    gameOver = false;
+    waitingForFirstFlap = true;
+
+    startUI.style.display = 'none';
+    gameOverUI.style.display = 'none';
+    scoreLabel.parentElement.style.display = '';
+
+    pipes = [];
+    enemies = [];
+    frame = 0;
+    score = 0;
+    enemyScore = 0;
+    enemyScoreLabel.textContent = enemyScore;
+
+    bird.y = internalH/2;
+    bird.vy = 0;
+    bird.rot = 0;
+    framesSinceLastPipe = 0;
+}
+
+function flap(){
+    if(!gameStarted) startGame();
+
+    if(waitingForFirstFlap) waitingForFirstFlap = false;
+
+    if(!gameOver && gameStarted){
+        bird.vy = JUMP;
+        bird.flapTimer=6;
+        if(audioUnlocked){ sndFlap.currentTime = 0; sndFlap.play().catch(()=>{}); }
+    }
+    if(gameOver) startGame();
+}
+
 document.addEventListener('keydown', e=>{if(e.code==='Space'||e.key===' '){e.preventDefault(); flap();}});
 canvas.addEventListener('pointerdown', e=>{e.preventDefault(); flap();},{passive:false});
 
@@ -153,17 +192,31 @@ function showGameOver(){
   if(score>highScore){highScore=score; localStorage.setItem('flappy_high',highScore);}
   finalScore.textContent=score; finalHigh.textContent=highScore; homeHighScoreNum.textContent=highScore;
   gameOverUI.style.display='flex'; scoreLabel.parentElement.style.display='none';
-  try{ sndHit.currentTime=0; sndHit.play(); }catch(e){}
+  try{ 
+      if(audioUnlocked){ sndHitPipe.currentTime=0; sndHitPipe.play().catch(()=>{}); }
+      sndHit.currentTime=0; sndHit.play(); 
+  }catch(e){}
 }
 
 function update(dt){
     frame++;
+
     cloudsA.forEach(c=>{c.x-=c.speed*dt;if(c.x<-200)c.x=internalW+200;});
     cloudsB.forEach(c=>{c.x-=c.speed*dt;if(c.x<-300)c.x=internalW+300;});
-    if(!gameStarted||gameOver){bird.flapTimer=Math.max(0,bird.flapTimer-dt);bird.vy=Math.sin(frame*0.08)*0.6;bird.y+=bird.vy*dt;bird.rot=Math.sin(frame*0.12)*0.25;return;}
+
+    if(!gameStarted || gameOver || waitingForFirstFlap){
+        bird.flapTimer=Math.max(0,bird.flapTimer-dt);
+        bird.vy = Math.sin(frame*0.15) * 1.2;
+        bird.y += bird.vy * dt;
+        bird.rot = Math.sin(frame*0.12) * 0.25;
+        return;
+    }
+
     bird.vy+=GRAVITY*dt; bird.y+=bird.vy*dt; bird.rot=Math.max(-0.6,Math.min(0.9,bird.vy*0.06));
+
     framesSinceLastPipe++;
     if(framesSinceLastPipe>=nextPipeIn) generatePipe();
+
     for(let i=pipes.length-1;i>=0;i--){
         const p=pipes[i]; p.x-=2.6*dt;
         if(!p.passed && p.x+p.w<bird.x){
@@ -172,15 +225,37 @@ function update(dt){
         }
         if(p.x<-80)pipes.splice(i,1);
     }
+
     for(let i=enemies.length-1;i>=0;i--){
-        const e=enemies[i]; e.x-=e.speed*dt; e.y+=Math.sin(frame*e.verticalFreq+i)*e.verticalAmp*dt*0.1;
-        if(bird.x<e.x+e.w && bird.x+bird.w>e.x && bird.y<e.y+e.h && bird.y+bird.h>e.y){ gameOver=true; gameStarted=false; showGameOver(); }
+        const e=enemies[i]; 
+        e.x-=e.speed*dt; 
+        e.y+=Math.sin(frame*e.verticalFreq+i)*e.verticalAmp*dt*0.1;
+
+        if(bird.x<e.x+e.w && bird.x+bird.w>e.x && bird.y<e.y+e.h && bird.y+bird.h>e.y){
+            // ⭐ Increase enemy points and remove enemy
+            enemyScore += e.golden ? 50 : 10;
+            enemyScoreLabel.textContent = enemyScore;
+            enemies.splice(i,1);
+            continue;
+        }
+
         if(e.x<-80) enemies.splice(i,1);
     }
-    for(const p of pipes){ if(bird.x<p.x+p.w && bird.x+bird.w>p.x){ if(bird.y<p.top||bird.y+bird.h>internalH-p.bottom){ gameOver=true; gameStarted=false; showGameOver();} } }
-    if(bird.y+bird.h>=internalH || bird.y<=0){ gameOver=true; gameStarted=false; showGameOver();}
+
+    for(const p of pipes){
+        if(bird.x<p.x+p.w && bird.x+bird.w>p.x){
+            if(bird.y<p.top||bird.y+bird.h>internalH-p.bottom){
+                gameOver=true; gameStarted=false; showGameOver();
+            }
+        }
+    }
+
+    if(bird.y+bird.h>=internalH || bird.y<=0){
+        gameOver=true; gameStarted=false; showGameOver();
+    }
 }
 
+// -------------------- DRAW FUNCTIONS -----------------------
 function drawBird(cx,cy,w,h,rot){
     ctx.save(); ctx.translate(cx,cy); ctx.rotate(rot);
     ctx.beginPath(); ctx.ellipse(0,0,w*0.45,h*0.5,0,0,Math.PI*2); ctx.fillStyle='#ffd54a'; ctx.fill();
@@ -191,99 +266,103 @@ function drawBird(cx,cy,w,h,rot){
     ctx.restore();
 }
 
+// NOTE: Enemy draw function same as before, keeping original design
 function drawEnemy(e){
     ctx.save();
     ctx.translate(e.x + e.w * 0.5, e.y + e.h * 0.5);
-    ctx.scale(-1, 1); // flip horizontally to face left
-    ctx.rotate(Math.sin((e.x + e.y) * 0.01) * 0.1); // slight body rotation
-
-    const scale = 0.75; // 3/4 size
-    const flap = Math.sin(frame * 0.3 + e.x*0.05) * 0.4; // wing flapping
-
-    // Body
+    ctx.scale(-1, 1);
+    ctx.rotate(Math.sin((e.x + e.y) * 0.01) * 0.1);
+    const scale = 0.75;
+    const flap = Math.sin(frame * 0.3 + e.x*0.05) * 0.4;
     ctx.beginPath();
     ctx.ellipse(0, 0, (bird.w * 0.45) * scale, (bird.h * 0.5) * scale, 0, 0, Math.PI*2);
-    ctx.fillStyle = '#ff0000'; // red
+    ctx.fillStyle = e.golden ? '#ffd700' : '#ff0000';
     ctx.fill();
-
-    // Belly / highlight
     ctx.beginPath();
     ctx.ellipse(-bird.w*0.05*scale, 0, bird.w*0.35*scale, bird.h*0.35*scale, 0, 0, Math.PI*2);
-    ctx.fillStyle = '#ff6666';
+    ctx.fillStyle = e.golden ? '#fff8dc' : '#ff6666';
     ctx.fill();
-
-    // Wing — flapping
     ctx.save();
     ctx.translate(-bird.w*0.02*scale, bird.h*0.05*scale);
     ctx.rotate(flap);
     ctx.beginPath();
     ctx.ellipse(0, 0, bird.w*0.25*scale, bird.h*0.12*scale, -0.6, 0, Math.PI*2);
-    ctx.fillStyle = '#cc0000';
+    ctx.fillStyle = e.golden ? '#ffdd33' : '#cc0000';
     ctx.fill();
     ctx.restore();
-
-    // Eye
     ctx.beginPath();
     ctx.arc(bird.w*0.18*scale, -bird.h*0.08*scale, bird.w*0.07*scale, 0, Math.PI*2);
     ctx.fillStyle = '#000';
     ctx.fill();
-
-    // Beak
     ctx.beginPath();
     ctx.moveTo(bird.w*0.36*scale,0);
     ctx.lineTo(bird.w*0.58*scale,-bird.h*0.08*scale);
     ctx.lineTo(bird.w*0.58*scale,bird.h*0.08*scale);
     ctx.closePath();
-    ctx.fillStyle = '#ff9900';
+    ctx.fillStyle = e.golden ? '#ffcc00' : '#ff9900';
     ctx.fill();
-
     ctx.restore();
 }
 
+function drawCloud(x,y,w){
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.beginPath(); ctx.ellipse(x,y,w*0.7,w*0.4,0,0,Math.PI*2);
+    ctx.ellipse(x+w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
+    ctx.ellipse(x-w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2);
+    ctx.fill();
+}
 
-function drawCloud(x,y,w){ ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.ellipse(x,y,w*0.7,w*0.4,0,0,Math.PI*2); ctx.ellipse(x+w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2); ctx.ellipse(x-w*0.35,y+6,w*0.5,w*0.3,0,0,Math.PI*2); ctx.fill(); }
-function drawPipe(x,y,w,h,isTop){ const grad=ctx.createLinearGradient(x,y,x,y+h); grad.addColorStop(0,'#0a6b3a'); grad.addColorStop(1,'#0a8d4a'); ctx.fillStyle=grad; ctx.fillRect(x,y,w,h); ctx.fillStyle='#8be6a4'; const rimH=8; if(isTop) ctx.fillRect(x-2,y+h-rimH,w+4,rimH); else ctx.fillRect(x-2,y-rimH,w+4,rimH); ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x+w-8,y+4,8,h-8); }
+function drawPipe(x,y,w,h,isTop){
+    const grad=ctx.createLinearGradient(x,y,x,y+h);
+    grad.addColorStop(0,'#0a6b3a'); grad.addColorStop(1,'#0a8d4a');
+    ctx.fillStyle=grad; ctx.fillRect(x,y,w,h);
+    ctx.fillStyle='#8be6a4';
+    const rimH=8;
+    if(isTop) ctx.fillRect(x-2,y+h-rimH,w+4,rimH);
+    else ctx.fillRect(x-2,y-rimH,w+4,rimH);
+    ctx.fillStyle='rgba(0,0,0,0.12)';
+    ctx.fillRect(x+w-8,y+4,8,h-8);
+}
 
 function draw(){
-    const g=ctx.createLinearGradient(0,0,0,internalH); g.addColorStop(0,'#70c5ce'); g.addColorStop(1,'#4fb0c8'); ctx.fillStyle=g; ctx.fillRect(0,0,internalW,internalH);
+    const g=ctx.createLinearGradient(0,0,0,internalH);
+    g.addColorStop(0,'#70c5ce');
+    g.addColorStop(1,'#4fb0c8');
+    ctx.fillStyle=g; ctx.fillRect(0,0,internalW,internalH);
+
     cloudsA.forEach(c=>{ctx.globalAlpha=c.alpha; drawCloud(c.x,c.y,c.w);});
     cloudsB.forEach(c=>{ctx.globalAlpha=c.alpha*0.9; drawCloud(c.x,c.y,c.w*1.4);});
     ctx.globalAlpha=1;
+
     ctx.fillStyle='#2d6b7a'; ctx.fillRect(0,internalH-32,internalW,32);
+
     for(const p of pipes) drawPipe(p.x,0,p.w,p.top,true), drawPipe(p.x,internalH-p.bottom,p.w,p.bottom,false);
     for(const e of enemies) drawEnemy(e);
-    ctx.save(); ctx.translate(bird.x+bird.w*0.5,bird.y+bird.h*0.5); ctx.rotate(bird.rot); ctx.globalAlpha=0.12; ctx.beginPath(); ctx.ellipse(0,36,bird.w*0.7,8,0,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill(); ctx.globalAlpha=1; ctx.restore();
+
+    ctx.save(); ctx.translate(bird.x+bird.w*0.5,bird.y+bird.h*0.5); ctx.rotate(bird.rot);
+    ctx.globalAlpha=0.12;
+    ctx.beginPath(); ctx.ellipse(0,36,bird.w*0.7,8,0,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+    ctx.globalAlpha=1; ctx.restore();
+
     drawBird(bird.x+bird.w*0.5,bird.y+bird.h*0.5,bird.w,bird.h,bird.rot);
 }
 
 let lastTime = performance.now();
-const FIXED_DT = 1; // 1 unit = 16.666ms (~60FPS)
-let accumulator = 0;
-
 function frameLoop(time){
     let rawMs = time - lastTime;
     lastTime = time;
-    accumulator += rawMs / 16.666; // convert ms to frame units
-
-    while(accumulator >= FIXED_DT){
-        update(FIXED_DT); // always use fixed dt
-        accumulator -= FIXED_DT;
-    }
-
-    draw(); // draw every frame, independent of physics
+    let dt = rawMs / 16.666;
+    dt = Math.min(dt, 4);
+    update(dt);
+    draw();
     requestAnimationFrame(frameLoop);
 }
-
 requestAnimationFrame(frameLoop);
 
-// -------------------------------------------------------------------
-
 resize(); resetGame();
-
 startMainBtn.addEventListener('click',()=>{if(!gameStarted)startGame();});
 playAgainBtn.addEventListener('click',()=>{startGame();});
 goHomeBtn.addEventListener('click',()=>{resetGame();});
 </script>
 </body>
 </html>
-
