@@ -188,16 +188,39 @@ function flap(){
 document.addEventListener('keydown', e=>{if(e.code==='Space'||e.key===' '){e.preventDefault(); flap();}});
 canvas.addEventListener('pointerdown', e=>{e.preventDefault(); flap();},{passive:false});
 
+// ---------- Updated showGameOver function ----------
 function showGameOver(){
   if(score>highScore){highScore=score; localStorage.setItem('flappy_high',highScore);}
-  finalScore.textContent=score; finalHigh.textContent=highScore; homeHighScoreNum.textContent=highScore;
-  gameOverUI.style.display='flex'; scoreLabel.parentElement.style.display='none';
+  finalScore.textContent = score;
+  finalHigh.textContent = highScore;
+  homeHighScoreNum.textContent = highScore;
+
+  // Remove existing hit points display if it exists
+  const existingHit = gameOverUI.querySelector('#enemyHitPointsDisplay');
+  if(existingHit) existingHit.remove();
+
+  // Add enemy bird hit points display above buttons
+  const enemyHitPointsDisplay = document.createElement('div');
+  enemyHitPointsDisplay.id = 'enemyHitPointsDisplay';
+  enemyHitPointsDisplay.style.marginTop = '8px';
+  enemyHitPointsDisplay.style.fontSize = '18px';
+  enemyHitPointsDisplay.textContent = "Bird Hit Points: " + enemyScore;
+
+  // Get the container that holds the buttons
+  const buttonContainer = gameOverUI.querySelector('div > div[style*="display:flex;gap:10px"]');
+  buttonContainer.parentElement.insertBefore(enemyHitPointsDisplay, buttonContainer);
+
+  gameOverUI.style.display='flex'; 
+  scoreLabel.parentElement.style.display='none';
+  
   try{ 
       if(audioUnlocked){ sndHitPipe.currentTime=0; sndHitPipe.play().catch(()=>{}); }
       sndHit.currentTime=0; sndHit.play(); 
   }catch(e){}
 }
 
+
+// ---------- UPDATE FUNCTION ----------
 function update(dt){
     frame++;
 
