@@ -137,8 +137,8 @@ function generatePipe(){
     }
 
     const cssWidth=parseInt(canvas.style.width||internalW,10);
-    const base = cssWidth<=500?200:30;
-    nextPipeIn = base+Math.floor(Math.random()*40);
+    const base = cssWidth<=360?140:100;
+    nextPipeIn = base+Math.floor(Math.random()*30);
     framesSinceLastPipe=0;
 }
 
@@ -389,5 +389,6 @@ goHomeBtn.addEventListener('click',()=>{resetGame();});
 </script>
 </body>
 </html>
+
 
 
